@@ -15,6 +15,8 @@ target_sources(ablateLibrary
         probes.cpp
         rocketMonitor.cpp
         turbFlowStats.cpp
+        boundarySolverMonitor.cpp
+
         PUBLIC
         monitor.hpp
         fieldErrorMonitor.hpp
@@ -32,6 +34,7 @@ target_sources(ablateLibrary
         probes.hpp
         rocketMonitor.hpp
         turbFlowStats.hpp
+        boundarySolverMonitor.hpp
         )
 
 add_subdirectory(logs)
