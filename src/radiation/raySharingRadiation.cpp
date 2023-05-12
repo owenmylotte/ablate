@@ -35,44 +35,55 @@ void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domai
             auto& identifier = identifiers[ipart];
             // If this local rank has never seen this search particle before, then it needs to add a new ray segment to local memory and record its index
             if (identifier.remoteRank != rank) {
-                //! Get nTheta
-                double theta = acos(virtualcoord[ipart].zdir);
-                double phi = atan2(virtualcoord[ipart].ydir, virtualcoord[ipart].xdir);
-                if (phi < 0) phi += 2 * ablate::utilities::Constants::pi;
-                PetscInt ntheta = (PetscInt)round((((theta / ablate::utilities::Constants::pi) * (double)nTheta) - 0.5));
-                PetscInt nphi = (PetscInt)round(((phi / (2.0 * ablate::utilities::Constants::pi)) * (double)nPhi));
-
-                // Update the identifier for this rank.  When it gets sent to another rank a copy will be made
-                identifier.remoteRank = rank;
-                // set the remoteRayId to be the next one in the way
-                identifier.remoteRayId =
-                    ((PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]) * raysPerCell) + (ntheta * nPhi) + nphi;  //! Should be set to (absoluteCellIndex * raysPerCell + angleNumber)
-                // bump the nSegment
-                identifier.nSegment++;
-
-                // store this ray and information in the return data
-                DMSwarmAddPoint(radReturn) >> utilities::PetscUtilities::checkError;  //!< Another solve particle is added here because the search particle has entered a new domain
-                struct Identifier* returnIdentifiers;                                 //!< Pointer to the ray identifier information
-                PetscInt* returnRank;                                                 //! while we are here, set the return rank.  This won't change anything until migrate is called
-                PetscInt nSegments;
-                DMSwarmGetLocalSize(radReturn, &nSegments) >> utilities::PetscUtilities::checkError;
-                DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
-                    utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-                DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
-
-                // these are only created as remote rays are identified, so we can remoteRayId for the rank
-                returnIdentifiers[nSegments - 1] = identifier;
-                returnRank[nSegments - 1] = identifier.originRank;
-
-                DMSwarmRestoreField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
-                    utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-                DMSwarmRestoreField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
+                PetscInt absoluteCellIndex = (PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]);
+                if (absoluteCellIndex == -1 || absoluteCellIndex > numberOriginCells) {
+                    // This should only happen if the particle arrives into a remote process's boundary cell.
+                    CreateNewSegment(radReturn, identifier, rank);
+                } else {
+                    auto& particleVirtualCoord = virtualcoord[ipart];  // Needs the virtual coordinate to back out the ray index it attaches to.
+                    AttachToExistingSegment(radReturn, identifier, rank, absoluteCellIndex, particleVirtualCoord);
+                }
             }
         }
     }
     DMSwarmRestoreField(radSearch, IdentifierField, nullptr, nullptr, (void**)&identifiers) >> utilities::PetscUtilities::checkError;
     DMSwarmRestoreField(radSearch, DMSwarmPICField_cellid, nullptr, nullptr, (void**)&index) >> utilities::PetscUtilities::checkError;
     DMSwarmRestoreField(radSearch, VirtualCoordField, nullptr, nullptr, (void**)&virtualcoord) >> utilities::PetscUtilities::checkError;
+}
+
+void ablate::radiation::RaySharingRadiation::AttachToExistingSegment(DM radReturn, struct ablate::radiation::Radiation::Identifier& identifier, PetscMPIInt rank, PetscInt absoluteCellIndex,
+                                                                     struct ablate::radiation::Radiation::Virtualcoord& particleVirtualCoord) {
+    //! Get nTheta
+    double theta = acos(particleVirtualCoord.zdir);
+    double phi = atan2(particleVirtualCoord.ydir, particleVirtualCoord.xdir);
+    if (phi < 0) phi += 2 * ablate::utilities::Constants::pi;
+    PetscInt ntheta = (PetscInt)round((((theta / ablate::utilities::Constants::pi) * (double)nTheta) - 0.5));
+    PetscInt nphi = (PetscInt)round(((phi / (2.0 * ablate::utilities::Constants::pi)) * (double)nPhi));
+
+    // Update the identifier for this rank.  When it gets sent to another rank a copy will be made
+    identifier.remoteRank = rank;
+    // set the remoteRayId to be the next one in the way
+    identifier.remoteRayId = (absoluteCellIndex * raysPerCell) + (ntheta * nPhi) + nphi;  //! Should be set to (absoluteCellIndex * raysPerCell + angleNumber)
+    // bump the nSegment
+    identifier.nSegment++;
+
+    // store this ray and information in the return data
+    DMSwarmAddPoint(radReturn) >> utilities::PetscUtilities::checkError;  //!< Another solve particle is added here because the search particle has entered a new domain
+    struct Identifier* returnIdentifiers;                                 //!< Pointer to the ray identifier information
+    PetscInt* returnRank;                                                 //! while we are here, set the return rank.  This won't change anything until migrate is called
+    PetscInt nRaySegments;
+    DMSwarmGetLocalSize(radReturn, &nRaySegments) >> utilities::PetscUtilities::checkError;
+    DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
+        utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
+    DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
+
+    // these are only created as remote rays are identified, so we can remoteRayId for the rank
+    returnIdentifiers[nRaySegments - 1] = identifier;
+    returnRank[nRaySegments - 1] = identifier.originRank;
+
+    DMSwarmRestoreField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
+        utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
+    DMSwarmRestoreField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
 }
 
 void ablate::radiation::RaySharingRadiation::ParticleStep(ablate::domain::SubDomain& subDomain, DM faceDM, const PetscScalar* faceGeomArray, DM radReturn, PetscInt npoints,
@@ -145,11 +156,13 @@ void ablate::radiation::RaySharingRadiation::ParticleStep(ablate::domain::SubDom
             /**
              * Only write the new path lengths if the segment belongs to this rank, otherwise it will just share.
              * Most instances the particle step won't occur on the remotely travelling particles because they are getting teleported
-             * We want to make sure they don't write anything anyway
+             * We want to make sure they don't write anything at any point in time
+             * Matching the origin rank doesn't account for particles that have re-entered their origin rank after travelling
+             * Using the segment number ensures that only the original segment track writes anything to the ray
              */
-            if (identifier.originRank == rank) { /** Step 1: Register the current cell index in the rays vector. The physical coordinates that have been set in the previous step / loop will be
-                                                  * immediately registered. Because the ray comes from the origin, all of the cell indexes are naturally ordered from the center out
-                                                  * */
+            if (identifier.nSegment == 0) { /** Step 1: Register the current cell index in the rays vector. The physical coordinates that have been set in the previous step / loop will be
+                                             * immediately registered. Because the ray comes from the origin, all of the cell indexes are naturally ordered from the center out
+                                             * */
                 auto& raySegment = ray.emplace_back();
                 raySegment.cell = index[ipart];
                 raySegment.pathLength = virtualcoords[ipart].hhere;
