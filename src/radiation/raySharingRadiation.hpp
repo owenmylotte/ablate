@@ -41,7 +41,7 @@ class RaySharingRadiation : public ablate::radiation::Radiation {
                       PetscInt nglobalpoints) override;  //!< Routine to move the particle one step
 
     void ParticleStep(ablate::domain::SubDomain& subDomain, DM faceDM, const PetscScalar* faceGeomArray, DM radReturn, PetscInt nlocalpoints,
-                              PetscInt nglobalpoints) override;  //!< Routine to move the particle one step
+                      PetscInt nglobalpoints) override;  //!< Routine to move the particle one step
 
     static inline std::string GetClassType() { return "RaySharingRadiation"; }
 
