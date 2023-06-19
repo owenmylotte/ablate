@@ -682,7 +682,7 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
             for (unsigned short int s = 0; s < raySegmentsPerOriginRay[rayOffset]; ++s) {
                 for (unsigned short int wavelengthIndex = 0; wavelengthIndex < propertySize; wavelengthIndex++) {
                     iSource[wavelengthIndex] += raySegmentSummary[localSegmentsMap[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex]].Ij * kRadd[wavelengthIndex];
-                    kRadd[wavelengthIndex] *= raySegmentSummary[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex].Krad;
+                    kRadd[wavelengthIndex] *= raySegmentSummary[localSegmentsMap[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex]].Krad;
                 }
                 segmentOffset++;
             }
