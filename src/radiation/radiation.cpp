@@ -314,7 +314,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
     // Get the number of unique ray segments.
     PetscInt uniqueRaySegments = 0;
     // For each ray segment
-    for (int i = 0; i < (returnedRaySegments + 1); i++) {
+    for (int i = 0; i < returnedRaySegments; i++) {
         // Check the ray segments before it.
         for (int n = 0; n < i; n++) {
             // If this ray segment has been seen, it isn't unique.
@@ -323,7 +323,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
                 break;
             }
             // If the ray segment hasn't been seen, then update the counter.
-            if (i == returnedRaySegments) uniqueRaySegments++;
+            if (n == (i - 1)) uniqueRaySegments++;
         }
     }
 
