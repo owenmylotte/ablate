@@ -310,16 +310,32 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
         returnedRaySegments += raySegmentsPerOriginRay[r];
     }
 
+    // TODO: Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
+    // Get the number of unique ray segments.
+    PetscInt uniqueRaySegments = 0;
+    // For each ray segment
+    for (int i = 0; i < (numberOfReturnedSegments + 1); i++) {
+        // Check the ray segments before it.
+        for (int n = 0; n < i; n++) {
+            // If this ray segment has been seen, it isn't unique.
+            if (returnIdentifiers[n].remoteRank == returnIdentifiers[i].remoteRank &&
+                returnIdentifiers[n].remoteRayId == returnIdentifiers[i].remoteRayId) {
+                break;
+            }
+            // If the ray segment hasn't been seen, then update the counter.
+            if (i == numberOfReturnedSegments) uniqueRaySegments++;
+        }
+    }
+
     /* Build the leafs for the petscSf.
      * - Each root corresponds to a single ray/segment id in the raySegmentSummary
      * - Each corresponding leaf points to a local/remote remoteRayCalculation indexed based upon the remote ray index
      * - because there are duplicates we are taking only the returnIdentifiers for each localMemoryIndex
      */
-    // TODO: Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
     PetscSFNode* remoteRayInformation;
-    PetscMalloc1(returnedRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
+    PetscMalloc1(uniqueRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
     PetscInt uniqueReturnedCount = 0;
-    for (PetscInt p = 0; p < numberOfReturnedSegments; ++p) {
+    for (PetscInt p = 0; p < numberOfReturnedSegments; p++) {
         // TODO: The local memory index should map the remoteRayInformation to the location where the stuff is stored.
         // determine where in local memory this remoteRayInformation corresponds to
         // first offset it by the originRayId
@@ -335,7 +351,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
         // Check whether the current segment exists in the SF already.
         PetscInt redundantMapper = -1;
-        for (int n = 0; n < uniqueReturnedCount; ++n) {
+        for (int n = 0; n < uniqueReturnedCount; n++) {
             if (remoteRayInformation[n].rank == returnIdentifiers[p].remoteRank &&
                 remoteRayInformation[n].index == returnIdentifiers[p].remoteRayId) {
                 redundantMapper = n;
@@ -355,7 +371,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
         // TODO: We need to store the ray information in a separate array whether the information is redundant or not.
         // We can just store the index of the value we need instead of copying the array into a larger one.
-//        localSegmentsMap =
+        PetscInt localSegmentsMap = 0;
 
     }
 
@@ -635,7 +651,7 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
     PetscSFBcastBegin(remoteAccess, carrierMpiType, (const void*)raySegmentsCalculations.data(), (void*)raySegmentSummary.data(), MPI_REPLACE) >> utilities::PetscUtilities::checkError;
     PetscSFBcastEnd(remoteAccess, carrierMpiType, (const void*)raySegmentsCalculations.data(), (void*)raySegmentSummary.data(), MPI_REPLACE) >> utilities::PetscUtilities::checkError;
 
-    /** March over each
+    /**
      * INDEXING ANNOTATIONS:
      * evaluatedGains: There is a gain evaluation for every cell * wavelength
      *  Therefore, the indexing of the gain evaluation is [absorptivityFunction.propertySize * cell + i] because the cells are looped through outside of the wavelengths
