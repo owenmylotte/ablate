@@ -304,10 +304,10 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
     // Keep track of the offset for each originRay assuming the memory is in order
     std::vector<PetscInt> rayOffset(numberOriginRays);
-    PetscInt uniqueRaySegments = 0;
+    PetscInt returnedRaySegments = 0;
     for (std::size_t r = 0; r < raySegmentsPerOriginRay.size(); r++) {
-        rayOffset[r] = uniqueRaySegments;
-        uniqueRaySegments += raySegmentsPerOriginRay[r];
+        rayOffset[r] = returnedRaySegments;
+        returnedRaySegments += raySegmentsPerOriginRay[r];
     }
 
     /* Build the leafs for the petscSf.
@@ -315,9 +315,12 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
      * - Each corresponding leaf points to a local/remote remoteRayCalculation indexed based upon the remote ray index
      * - because there are duplicates we are taking only the returnIdentifiers for each localMemoryIndex
      */
+    // TODO: Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
     PetscSFNode* remoteRayInformation;
-    PetscMalloc1(uniqueRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
+    PetscMalloc1(returnedRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
+    PetscInt uniqueReturnedCount = 0;
     for (PetscInt p = 0; p < numberOfReturnedSegments; ++p) {
+        // TODO: The local memory index should map the remoteRayInformation to the location where the stuff is stored.
         // determine where in local memory this remoteRayInformation corresponds to
         // first offset it by the originRayId
         PetscInt localMemoryIndex = rayOffset[returnIdentifiers[p].originRayId];
@@ -325,9 +328,35 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
         // order them in terms of origin to the farthest away
         localMemoryIndex += returnIdentifiers[p].nSegment;
 
-        // Store the remote ray information at this localMemoryIndex
-        remoteRayInformation[localMemoryIndex].rank = returnIdentifiers[p].remoteRank;
-        remoteRayInformation[localMemoryIndex].index = returnIdentifiers[p].remoteRayId;
+        // Loop through each segment. Check whether the segment is in the communication array.
+        // If the segment has already been asked for, don't set it as an SF node.
+        // If the segment does not exist, add it and map the current segment.
+        // If the segment exists, just map the current segment.
+
+        // Check whether the current segment exists in the SF already.
+        PetscInt redundantMapper = -1;
+        for (int n = 0; n < uniqueReturnedCount; ++n) {
+            if (remoteRayInformation[n].rank == returnIdentifiers[p].remoteRank &&
+                remoteRayInformation[n].index == returnIdentifiers[p].remoteRayId) {
+                redundantMapper = n;
+            }
+            break;
+        }
+
+        // If this segment is not redundant:
+        if (redundantMapper == -1) {
+            // Store the remote ray information at this localMemoryIndex
+            remoteRayInformation[uniqueReturnedCount].rank = returnIdentifiers[p].remoteRank;
+            remoteRayInformation[uniqueReturnedCount].index = returnIdentifiers[p].remoteRayId;
+            // If the information is unique, set the mapper to the last index of the unique array.
+            redundantMapper = uniqueReturnedCount;
+            uniqueReturnedCount++;
+        }
+
+        // TODO: We need to store the ray information in a separate array whether the information is redundant or not.
+        // We can just store the index of the value we need instead of copying the array into a larger one.
+//        localSegmentsMap =
+
     }
 
     // remove the radReturn, the information has now been moved to the remoteRayInformation
@@ -338,7 +367,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
     // Create the remote access structure
     PetscSFCreate(PETSC_COMM_WORLD, &remoteAccess) >> utilities::PetscUtilities::checkError;
     PetscSFSetFromOptions(remoteAccess) >> utilities::PetscUtilities::checkError;
-    PetscSFSetGraph(remoteAccess, (PetscInt)raySegments.size(), uniqueRaySegments, nullptr, PETSC_OWN_POINTER, remoteRayInformation, PETSC_OWN_POINTER) >> utilities::PetscUtilities::checkError;
+    PetscSFSetGraph(remoteAccess, (PetscInt)raySegments.size(), returnedRaySegments, nullptr, PETSC_OWN_POINTER, remoteRayInformation, PETSC_OWN_POINTER) >> utilities::PetscUtilities::checkError;
     PetscSFSetUp(remoteAccess) >> utilities::PetscUtilities::checkError;
 
     // Size up the memory to hold the local calculations and the retrieved information
