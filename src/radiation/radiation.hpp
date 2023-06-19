@@ -271,6 +271,9 @@ class Radiation : protected utilities::Loggable<Radiation> {  //!< Cell solver p
     const std::shared_ptr<ablate::monitors::logs::Log> log = nullptr;
     static inline constexpr char IdentifierField[] = "identifier";
     static inline constexpr char VirtualCoordField[] = "virtual coord";
+
+   private:
+    PetscInt* localSegmentsMap;
 };
 /**
  * provide write for the id

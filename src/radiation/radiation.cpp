@@ -292,12 +292,12 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
     raySegmentsPerOriginRay.resize(numberOriginRays, 0);
 
     // March over each returned segment and add to the numberOriginRays
-    PetscInt numberOfReturnedSegments;
-    DMSwarmGetLocalSize(radReturn, &numberOfReturnedSegments);
+    PetscInt dmswarmReturnedSegments;
+    DMSwarmGetLocalSize(radReturn, &dmswarmReturnedSegments);
     struct Identifier* returnIdentifiers;  //!< Pointer to the ray identifier information
     DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
         utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-    for (PetscInt p = 0; p < numberOfReturnedSegments; ++p) {
+    for (PetscInt p = 0; p < dmswarmReturnedSegments; ++p) {
         // There may be duplicates so take the maximum based upon nSegment for the size
         raySegmentsPerOriginRay[returnIdentifiers[p].originRayId] = PetscMax(raySegmentsPerOriginRay[returnIdentifiers[p].originRayId], (returnIdentifiers[p].nSegment + 1));
     }
@@ -310,11 +310,11 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
         returnedRaySegments += raySegmentsPerOriginRay[r];
     }
 
-    // TODO: Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
+    // Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
     // Get the number of unique ray segments.
     PetscInt uniqueRaySegments = 0;
     // For each ray segment
-    for (int i = 0; i < (numberOfReturnedSegments + 1); i++) {
+    for (int i = 0; i < (returnedRaySegments + 1); i++) {
         // Check the ray segments before it.
         for (int n = 0; n < i; n++) {
             // If this ray segment has been seen, it isn't unique.
@@ -323,7 +323,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
                 break;
             }
             // If the ray segment hasn't been seen, then update the counter.
-            if (i == numberOfReturnedSegments) uniqueRaySegments++;
+            if (i == returnedRaySegments) uniqueRaySegments++;
         }
     }
 
@@ -334,9 +334,11 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
      */
     PetscSFNode* remoteRayInformation;
     PetscMalloc1(uniqueRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
+    // Allocate the mapping array with a size of returnedRaySegments
+    PetscMalloc1(returnedRaySegments, &localSegmentsMap) >> utilities::PetscUtilities::checkError;
     PetscInt uniqueReturnedCount = 0;
-    for (PetscInt p = 0; p < numberOfReturnedSegments; p++) {
-        // TODO: The local memory index should map the remoteRayInformation to the location where the stuff is stored.
+    for (PetscInt p = 0; p < dmswarmReturnedSegments; p++) {
+        // The local memory index should map the remoteRayInformation to the location where the stuff is stored.
         // determine where in local memory this remoteRayInformation corresponds to
         // first offset it by the originRayId
         PetscInt localMemoryIndex = rayOffset[returnIdentifiers[p].originRayId];
@@ -369,10 +371,9 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
             uniqueReturnedCount++;
         }
 
-        // TODO: We need to store the ray information in a separate array whether the information is redundant or not.
-        // We can just store the index of the value we need instead of copying the array into a larger one.
-        PetscInt localSegmentsMap = 0;
-
+        // We need to store the ray information in a separate array whether the information is redundant or not.
+        // We can just store the index of the value we need.
+        localSegmentsMap[localMemoryIndex] = redundantMapper;
     }
 
     // remove the radReturn, the information has now been moved to the remoteRayInformation
@@ -388,7 +389,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
     // Size up the memory to hold the local calculations and the retrieved information
     raySegmentsCalculations.resize(raySegments.size() * absorptivityFunction.propertySize);
-    raySegmentSummary.resize(numberOfReturnedSegments * absorptivityFunction.propertySize);
+    raySegmentSummary.resize(dmswarmReturnedSegments * absorptivityFunction.propertySize);
     evaluatedGains.resize(numberOriginCells * absorptivityFunction.propertySize);  //! Size each of the entries to hold all of the wavelengths being transported.
 
     // Create a mpi data type to allow reducing the remoteRayCalculation to raySegmentSummary
@@ -680,7 +681,7 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
              */
             for (unsigned short int s = 0; s < raySegmentsPerOriginRay[rayOffset]; ++s) {
                 for (unsigned short int wavelengthIndex = 0; wavelengthIndex < propertySize; wavelengthIndex++) {
-                    iSource[wavelengthIndex] += raySegmentSummary[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex].Ij * kRadd[wavelengthIndex];
+                    iSource[wavelengthIndex] += raySegmentSummary[localSegmentsMap[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex]].Ij * kRadd[wavelengthIndex];
                     kRadd[wavelengthIndex] *= raySegmentSummary[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex].Krad;
                 }
                 segmentOffset++;
