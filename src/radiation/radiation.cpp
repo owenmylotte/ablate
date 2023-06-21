@@ -309,6 +309,8 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
         rayOffset[r] = returnedRaySegments;
         returnedRaySegments += raySegmentsPerOriginRay[r];
     }
+    // Allocate the mapping array with a size of returnedRaySegments
+    localSegmentsMap.resize(returnedRaySegments);
 
     // Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
     // Get the number of unique ray segments.
@@ -333,8 +335,6 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
      */
     PetscSFNode* remoteRayInformation;
     PetscMalloc1(uniqueRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
-    // Allocate the mapping array with a size of returnedRaySegments
-    PetscMalloc1(returnedRaySegments, &localSegmentsMap) >> utilities::PetscUtilities::checkError;
     PetscInt uniqueReturnedCount = 0;
     for (PetscInt p = 0; p < dmSwarmReturnedSegments; p++) {
         // The local memory index should map the remoteRayInformation to the location where the stuff is stored.

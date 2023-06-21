@@ -273,7 +273,7 @@ class Radiation : protected utilities::Loggable<Radiation> {  //!< Cell solver p
     static inline constexpr char VirtualCoordField[] = "virtual coord";
 
    private:
-    PetscInt* localSegmentsMap;
+    std::vector<PetscInt> localSegmentsMap;
 };
 /**
  * provide write for the id
