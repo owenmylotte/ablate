@@ -147,7 +147,9 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
 
     if (log) {
         PetscMPIInt totalCount = 0;
-        MPI_Reduce(&ipart, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+        PetscMPIInt localCount = 0;
+        PetscMPIIntCast(ipart, &localCount);
+        MPI_Reduce(&localCount, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
         log->Printf("Particles Setup: %i\n", totalCount);
         DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
         log->Printf("After First Migrate: %i\n", ipart);
