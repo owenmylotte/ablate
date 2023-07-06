@@ -1,5 +1,4 @@
 #include "eos/mockEOS.hpp"
-#include "eos/perfectGas.hpp"
 #include "eos/radiationProperties/constant.hpp"
 #include "gtest/gtest.h"
 

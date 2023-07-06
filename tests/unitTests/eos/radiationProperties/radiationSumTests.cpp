@@ -56,7 +56,7 @@ INSTANTIATE_TEST_SUITE_P(
                                                              std::make_shared<ablate::finiteVolume::CompressibleFlowFields>(eos)};
 
                                                          return std::vector<std::shared_ptr<ablate::eos::radiationProperties::RadiationModel>>{
-                                                             std::make_shared<ablate::eos::radiationProperties::Constant>( 1.4, 1),
+                                                             std::make_shared<ablate::eos::radiationProperties::Constant>(1.4, 1),
                                                              std::make_shared<ablate::eos::radiationProperties::Constant>(1.6, 1)};
                                                      },
                                                  .expectedParameters = {{ablate::eos::radiationProperties::RadiationProperty::Absorptivity, 3.0}}},
