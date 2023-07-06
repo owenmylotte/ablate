@@ -146,7 +146,9 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
     DMSwarmMigrate(radSearch, PETSC_TRUE) >> utilities::PetscUtilities::checkError;  //!< Sets the search particles in the cell indexes to which they have been assigned
 
     if (log) {
-        log->Printf("Particles Setup: %i\n", ipart);
+        PetscMPIInt totalCount = 0;
+        MPI_Reduce(&ipart, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+        log->Printf("Particles Setup: %i\n", totalCount);
         DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
         log->Printf("After First Migrate: %i\n", ipart);
     }
@@ -155,7 +157,7 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
 
 void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellRange, ablate::domain::SubDomain& subDomain) {
     if (log) log->Printf("Migration Start: %s \n", solverId.c_str());
-    StartEvent((GetClassType() + "::Initialize").c_str());
+    StartEvent((GetClassType() + "::Initialize::LoadArrays").c_str());
     DM faceDM;
     const PetscScalar* faceGeomArray;
 
@@ -191,7 +193,8 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
     PetscInt npoints = 0;
     DMSwarmGetLocalSize(radSearch, &npoints) >> utilities::PetscUtilities::checkError;  //!< Recalculate the number of particles that are in the domain
     DMSwarmGetSize(radSearch, &nglobalpoints) >> utilities::PetscUtilities::checkError;
-    PetscInt stepcount = 0;       //!< Count the number of steps that the particles have taken
+    PetscInt stepcount = 0;  //!< Count the number of steps that the particles have taken
+    EndEvent();
     while (nglobalpoints != 0) {  //!< WHILE THERE ARE PARTICLES IN ANY DOMAIN
         // If this local rank has never seen this search particle before, then it needs to add a new ray segment to local memory and record its index
         IdentifyNewRaysOnRank(subDomain, radReturn, npoints);
@@ -224,6 +227,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
              * If the domain is 1D and the x-direction of the particle is zero then delete the particle here
              * */
             if ((!(domain::Region::InRegion(region, subDomain.GetDM(), index[ipart]))) || ((dim == 1) && (abs(virtualcoord[ipart].xdir) < 0.0000001))) {
+                StartEvent((GetClassType() + "::Initialize::SetBoundaryCondition").c_str());
                 //! If the boundary has been reached by this ray, then add a boundary condition segment to the ray.
                 auto& ray = raySegments[identifier[ipart].remoteRayId];
                 auto& raySegment = ray.emplace_back();
@@ -243,7 +247,9 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
                 DMSwarmGetField(radSearch, IdentifierField, nullptr, nullptr, (void**)&identifier) >> utilities::PetscUtilities::checkError;
                 DMSwarmGetField(radSearch, VirtualCoordField, nullptr, nullptr, (void**)&virtualcoord) >> utilities::PetscUtilities::checkError;
                 ipart--;  //!< Check the point replacing the one that was deleted
+                EndEvent();
             } else {
+                StartEvent((GetClassType() + "::Initialize::UpdateCoordinates").c_str());
                 /** Step 4: Push the particle virtual coordinates to the intersection that was found in the previous step.
                  * This ensures that the next calculated path length will start from the boundary of the adjacent cell.
                  * */
@@ -260,6 +266,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
                  * */
                 UpdateCoordinates(ipart, virtualcoord, coord, 0.1);  //!< Update the coordinates of the particle to move it beyond the face of the adjacent cell.
                 virtualcoord[ipart].hhere = 0;                       //!< Reset the path length to zero
+                EndEvent();
             }
         }
         /** Restore the fields associated with the particles after all of the particles have been stepped */
@@ -270,6 +277,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
         if (log) log->Printf("Migrate ...");
 
+        StartEvent((GetClassType() + "::Initialize::Migrate").c_str());
         /** DMSwarm Migrate to move the ray search particle into the next domain if it has crossed. If it no longer appears in this domain then end the ray segment. */
         DMSwarmMigrate(radSearch, PETSC_TRUE) >> utilities::PetscUtilities::checkError;  //!< Migrate the search particles and remove the particles that have left the domain space.
 
@@ -278,36 +286,67 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
         if (log) log->Printf(" Global Steps: %" PetscInt_FMT "    Global Points: %" PetscInt_FMT "\n", stepcount, nglobalpoints);
         stepcount++;
+        EndEvent();
     }
     // Cleanup
     DMDestroy(&radSearch) >> utilities::PetscUtilities::checkError;
     VecRestoreArrayRead(faceGeomVec, &faceGeomArray) >> utilities::PetscUtilities::checkError;
 
     // Move the identifiers in radReturn back to origin
+    StartEvent((GetClassType() + "::Initialize::RadReturn").c_str());
     DMSwarmMigrate(radReturn, PETSC_TRUE) >> utilities::PetscUtilities::checkError;
+    EndEvent();
 
+    StartEvent((GetClassType() + "::Initialize::BuildStarForest").c_str());
     /* radReturn contains a list of all ranks (including this one) that contain segments for each ray.
      * Count the number of ray segments per ray
      */
     raySegmentsPerOriginRay.resize(numberOriginRays, 0);
 
     // March over each returned segment and add to the numberOriginRays
-    PetscInt numberOfReturnedSegments;
-    DMSwarmGetLocalSize(radReturn, &numberOfReturnedSegments);
+    PetscInt dmSwarmReturnedSegments;
+    DMSwarmGetLocalSize(radReturn, &dmSwarmReturnedSegments);
     struct Identifier* returnIdentifiers;  //!< Pointer to the ray identifier information
     DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
         utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-    for (PetscInt p = 0; p < numberOfReturnedSegments; ++p) {
+    for (PetscInt p = 0; p < dmSwarmReturnedSegments; ++p) {
         // There may be duplicates so take the maximum based upon nSegment for the size
         raySegmentsPerOriginRay[returnIdentifiers[p].originRayId] = PetscMax(raySegmentsPerOriginRay[returnIdentifiers[p].originRayId], (returnIdentifiers[p].nSegment + 1));
     }
 
     // Keep track of the offset for each originRay assuming the memory is in order
     std::vector<PetscInt> rayOffset(numberOriginRays);
-    PetscInt uniqueRaySegments = 0;
+    PetscInt returnedRaySegments = 0;
     for (std::size_t r = 0; r < raySegmentsPerOriginRay.size(); r++) {
-        rayOffset[r] = uniqueRaySegments;
-        uniqueRaySegments += raySegmentsPerOriginRay[r];
+        rayOffset[r] = returnedRaySegments;
+        returnedRaySegments += raySegmentsPerOriginRay[r];
+    }
+    // Allocate the mapping array with a size of returnedRaySegments
+    localSegmentsMap.resize(returnedRaySegments);
+
+    // Must set the size of remoteRayInformation as the number of unique segments before checking in the place that we do.
+    // Get the number of unique ray segments.
+    PetscInt uniqueRaySegments = 0;
+    // Array to keep track of unique segments
+    std::vector<std::pair<PetscInt, PetscInt>> seenSegments;
+
+    // For each ray segment
+    for (PetscInt i = 0; i < returnedRaySegments; i++) {
+        bool isUnique = true;
+        // Check the ray segments before it.
+        for (const auto& segment : seenSegments) {
+            // If this ray segment has been seen, it isn't unique.
+            if (segment.first == returnIdentifiers[i].remoteRank && segment.second == returnIdentifiers[i].remoteRayId) {
+                isUnique = false;
+                break;
+            }
+        }
+
+        // If the ray segment is unique, then update the counter and add it to the seenSegments.
+        if (isUnique) {
+            seenSegments.push_back(std::make_pair(returnIdentifiers[i].remoteRank, returnIdentifiers[i].remoteRayId));
+            uniqueRaySegments++;
+        }
     }
 
     /* Build the leafs for the petscSf.
@@ -317,7 +356,9 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
      */
     PetscSFNode* remoteRayInformation;
     PetscMalloc1(uniqueRaySegments, &remoteRayInformation) >> utilities::PetscUtilities::checkError;
-    for (PetscInt p = 0; p < numberOfReturnedSegments; ++p) {
+    PetscInt uniqueReturnedCount = 0;
+    for (PetscInt p = 0; p < returnedRaySegments; p++) {
+        // The local memory index should map the remoteRayInformation to the location where the stuff is stored.
         // determine where in local memory this remoteRayInformation corresponds to
         // first offset it by the originRayId
         PetscInt localMemoryIndex = rayOffset[returnIdentifiers[p].originRayId];
@@ -325,9 +366,33 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
         // order them in terms of origin to the farthest away
         localMemoryIndex += returnIdentifiers[p].nSegment;
 
-        // Store the remote ray information at this localMemoryIndex
-        remoteRayInformation[localMemoryIndex].rank = returnIdentifiers[p].remoteRank;
-        remoteRayInformation[localMemoryIndex].index = returnIdentifiers[p].remoteRayId;
+        // Loop through each segment. Check whether the segment is in the communication array.
+        // If the segment has already been asked for, don't set it as an SF node.
+        // If the segment does not exist, add it and map the current segment.
+        // If the segment exists, just map the current segment.
+
+        // Check whether the current segment exists in the SF already.
+        PetscInt redundantMapper = -1;
+        for (PetscInt n = 0; n < uniqueReturnedCount; n++) {
+            if (remoteRayInformation[n].rank == returnIdentifiers[p].remoteRank && remoteRayInformation[n].index == returnIdentifiers[p].remoteRayId) {
+                redundantMapper = n;
+                break;
+            }
+        }
+
+        // If this segment is not redundant:
+        if (redundantMapper == -1) {
+            // Store the remote ray information at this localMemoryIndex
+            remoteRayInformation[uniqueReturnedCount].rank = returnIdentifiers[p].remoteRank;
+            remoteRayInformation[uniqueReturnedCount].index = returnIdentifiers[p].remoteRayId;
+            // If the information is unique, set the mapper to the last index of the unique array.
+            redundantMapper = uniqueReturnedCount;
+            uniqueReturnedCount++;
+        }
+
+        // We need to store the ray information in a separate array whether the information is redundant or not.
+        // We can just store the index of the value we need.
+        localSegmentsMap[localMemoryIndex] = redundantMapper;
     }
 
     // remove the radReturn, the information has now been moved to the remoteRayInformation
@@ -343,11 +408,11 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
     // Size up the memory to hold the local calculations and the retrieved information
     raySegmentsCalculations.resize(raySegments.size() * absorptivityFunction.propertySize);
-    raySegmentSummary.resize(numberOfReturnedSegments * absorptivityFunction.propertySize);
+    raySegmentSummary.resize(dmSwarmReturnedSegments * absorptivityFunction.propertySize);
     evaluatedGains.resize(numberOriginCells * absorptivityFunction.propertySize);  //! Size each of the entries to hold all of the wavelengths being transported.
 
     // Create a mpi data type to allow reducing the remoteRayCalculation to raySegmentSummary
-    PetscInt count = 2 * absorptivityFunction.propertySize;  //! = 2 * (the number of independant wavelengths that are being considered). Should be read from absorption model.
+    PetscInt count = 2 * absorptivityFunction.propertySize;  //! = 2 * (the number of independent wavelengths that are being considered). Should be read from absorption model.
     MPI_Type_contiguous(count, MPIU_REAL, &carrierMpiType) >> utilities::MpiUtilities::checkError;
     MPI_Type_commit(&carrierMpiType) >> utilities::MpiUtilities::checkError;
     EndEvent();
@@ -400,6 +465,7 @@ PetscReal ablate::radiation::Radiation::FaceIntersect(PetscInt ip, Virtualcoord*
 PetscReal ablate::radiation::Radiation::SurfaceComponent(const PetscReal normal[], PetscInt iCell, PetscInt nphi, PetscInt ntheta) { return 1.0; }
 
 void ablate::radiation::Radiation::IdentifyNewRaysOnRank(ablate::domain::SubDomain& subDomain, DM radReturn, PetscInt npoints) { /** Check that the particle is in a valid region */
+    StartEvent((GetClassType() + "::Initialize::IdentifyNewRaysOnRank").c_str());
     PetscMPIInt rank = 0;
     MPI_Comm_rank(subDomain.GetComm(), &rank);
 
@@ -418,36 +484,43 @@ void ablate::radiation::Radiation::IdentifyNewRaysOnRank(ablate::domain::SubDoma
             auto& identifier = identifiers[ipart];
             // If this local rank has never seen this search particle before, then it needs to add a new ray segment to local memory and record its index
             if (identifier.remoteRank != rank) {
-                // Update the identifier for this rank.  When it gets sent to another rank a copy will be made
-                identifier.remoteRank = rank;
-                // set the remoteRayId to be the next one in the way
-                identifier.remoteRayId = (PetscInt)raySegments.size();
-                // bump the nSegment
-                identifier.nSegment++;
-
-                // Create an empty struct in the ray
-                raySegments.emplace_back();
-
-                // store this ray and information in the return data
-                DMSwarmAddPoint(radReturn) >> utilities::PetscUtilities::checkError;  //!< Another solve particle is added here because the search particle has entered a new domain
-                struct Identifier* returnIdentifiers;                                 //!< Pointer to the ray identifier information
-                PetscInt* returnRank;                                                 //! while we are here, set the return rank.  This won't change anything until migrate is called
-                DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
-                    utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-                DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
-
-                // these are only created as remote rays are identified, so we can remoteRayId for the rank
-                returnIdentifiers[identifier.remoteRayId] = identifier;
-                returnRank[identifier.remoteRayId] = identifier.originRank;
-
-                DMSwarmRestoreField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
-                    utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
-                DMSwarmRestoreField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
+                CreateNewSegment(radReturn, identifier, rank);
             }
         }
     }
     DMSwarmRestoreField(radSearch, IdentifierField, nullptr, nullptr, (void**)&identifiers) >> utilities::PetscUtilities::checkError;
     DMSwarmRestoreField(radSearch, DMSwarmPICField_cellid, nullptr, nullptr, (void**)&index) >> utilities::PetscUtilities::checkError;
+    EndEvent();
+}
+
+void ablate::radiation::Radiation::CreateNewSegment(DM radReturn, struct Identifier& identifier, PetscMPIInt rank) {
+    // Update the identifier for this rank.  When it gets sent to another rank a copy will be made
+    identifier.remoteRank = (PetscInt)rank;
+    // set the remoteRayId to be the next one in the way
+    identifier.remoteRayId = (PetscInt)raySegments.size();
+    // bump the nSegment
+    identifier.nSegment++;
+
+    // Create an empty struct in the ray
+    raySegments.emplace_back();
+
+    // store this ray and information in the return data
+    DMSwarmAddPoint(radReturn) >> utilities::PetscUtilities::checkError;  //!< Another solve particle is added here because the search particle has entered a new domain
+    struct Identifier* returnIdentifiers;                                 //!< Pointer to the ray identifier information
+    PetscInt* returnRank;                                                 //! while we are here, set the return rank.  This won't change anything until migrate is called
+    PetscInt nRaySegments;
+    DMSwarmGetLocalSize(radReturn, &nRaySegments) >> utilities::PetscUtilities::checkError;
+    DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
+        utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
+    DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
+
+    // these are only created as remote rays are identified, so we can remoteRayId for the rank
+    returnIdentifiers[nRaySegments - 1] = identifier;
+    returnRank[nRaySegments - 1] = identifier.originRank;
+
+    DMSwarmRestoreField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
+        utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
+    DMSwarmRestoreField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
 }
 
 void ablate::radiation::Radiation::ParticleStep(ablate::domain::SubDomain& subDomain, DM faceDM, const PetscScalar* faceGeomArray, DM radReturn, PetscInt npoints,
@@ -472,6 +545,7 @@ void ablate::radiation::Radiation::ParticleStep(ablate::domain::SubDomain& subDo
     for (PetscInt ipart = 0; ipart < npoints; ipart++) {
         /** Check that the particle is in a valid region */
         if (index[ipart] >= 0 && subDomain.InRegion(index[ipart])) {
+            StartEvent((GetClassType() + "::Initialize::GetConnectivity").c_str());
             auto& identifier = identifiers[ipart];
             // Exact the ray to reduce lookup
             auto& ray = raySegments[identifier.remoteRayId];
@@ -498,7 +572,9 @@ void ablate::radiation::Radiation::ParticleStep(ablate::domain::SubDomain& subDo
             const PetscInt* cellFaces;
             DMPlexGetConeSize(subDomain.GetDM(), index[ipart], &numberFaces) >> utilities::PetscUtilities::checkError;
             DMPlexGetCone(subDomain.GetDM(), index[ipart], &cellFaces) >> utilities::PetscUtilities::checkError;  //!< Get the face geometry associated with the current cell
+            EndEvent();
 
+            StartEvent((GetClassType() + "::Initialize::CalculatePathLength").c_str());
             /** Check every face for intersection with the segment.
              * The segment with the shortest path length for intersection will be the one that physically intercepts with the cell face and not with the nonphysical plane beyond the face.
              * */
@@ -524,6 +600,7 @@ void ablate::radiation::Radiation::ParticleStep(ablate::domain::SubDomain& subDo
             }
             virtualcoords[ipart].hhere = (virtualcoords[ipart].hhere == 0) ? minCellRadius : virtualcoords[ipart].hhere;
             raySegment.pathLength = virtualcoords[ipart].hhere;
+            EndEvent();
         } else {
             virtualcoords[ipart].hhere = (virtualcoords[ipart].hhere == 0) ? minCellRadius : virtualcoords[ipart].hhere;
         }
@@ -534,7 +611,7 @@ void ablate::radiation::Radiation::ParticleStep(ablate::domain::SubDomain& subDo
 }
 
 void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Field temperatureField, Vec auxVec) {
-    StartEvent((GetClassType() + "::EvaluateGains").c_str());
+    StartEvent((GetClassType() + "::EvaluateGains::LoadArrays").c_str());
 
     unsigned short int propertySize = static_cast<unsigned short int>(absorptivityFunction.propertySize);
 
@@ -553,9 +630,11 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
     // Get access to the absorption function
     auto absorptivityFunctionContext = absorptivityFunction.context.get();
     auto emissivityFunctionContext = emissivityFunction.context.get();
+    EndEvent();
 
     // Start by marching over all rays in this rank
     for (std::size_t raySegmentIndex = 0; raySegmentIndex < raySegments.size(); ++raySegmentIndex) {
+        StartEvent((GetClassType() + "::EvaluateGains::ZeroSegments").c_str());
         //! Zero this ray segment for all wavelengths
         for (unsigned short int wavelengthIndex = 0; wavelengthIndex < static_cast<unsigned short int>(absorptivityFunction.propertySize);
              wavelengthIndex++) {  //! Iterate through every wavelength entry in this ray segment
@@ -566,19 +645,27 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
         // compute the Ij and Krad for this segment starting at the point closest to the ray origin
         const auto& raySegment =
             raySegments[raySegmentIndex];  //! This is allowed to be cast to auto and indexed raySegmentIndex because there is only one physical ray segment that we are reading from.
+        EndEvent();
 
         for (const auto& cellSegment : raySegment) {
             const PetscReal* sol = nullptr;          //!< The solution value at any given location
             const PetscReal* temperature = nullptr;  //!< The temperature at any given location
+            StartEvent((GetClassType() + "::EvaluateGains::ReadSolutionArray").c_str());
             DMPlexPointLocalRead(solDm, cellSegment.cell, solArray, &sol);
+            EndEvent();
             if (sol) {
+                StartEvent((GetClassType() + "::EvaluateGains::ReadTemperatureArray").c_str());
                 DMPlexPointLocalFieldRead(auxDm, cellSegment.cell, temperatureField.id, auxArray, &temperature);
+                EndEvent();
                 if (temperature) {                                       /** Input absorptivity (kappa) values from model here. */
                     PetscReal kappa[absorptivityFunction.propertySize];  //!< Absorptivity coefficient, property of each cell. This is an array that we will iterate through for every evaluation
                     PetscReal emission[absorptivityFunction.propertySize];
+                    StartEvent((GetClassType() + "::EvaluateGains::PropertiesEvaluation").c_str());
                     absorptivityFunction.function(sol, *temperature, kappa, absorptivityFunctionContext);  //! Get the absorption and emission information from the provided properties models.
                     emissivityFunction.function(sol, *temperature, emission, emissivityFunctionContext);
+                    EndEvent();
                     //! Get the pointer to the returned array of absorption values. Iterate through every wavelength for the evaluation.
+                    StartEvent((GetClassType() + "::EvaluateGains::LocalSegmentIntegration").c_str());
                     if (cellSegment.pathLength < 0) {
                         // This is a boundary cell
                         for (int wavelengthIndex = 0; wavelengthIndex < propertySize; ++wavelengthIndex) {
@@ -597,15 +684,20 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
                             raySegmentsCalculations[absorptivityFunction.propertySize * raySegmentIndex + wavelengthIndex].Krad *= absorbed_portion;
                         }
                     }
+                    EndEvent();
                 }
             }
         }
     }
 
+    MPI_Barrier(PETSC_COMM_WORLD);
+    StartEvent((GetClassType() + "::EvaluateGains::Communication").c_str());
     // Now that all the ray information is computed, transfer it back to rank that originated each ray using a pull
     PetscSFBcastBegin(remoteAccess, carrierMpiType, (const void*)raySegmentsCalculations.data(), (void*)raySegmentSummary.data(), MPI_REPLACE) >> utilities::PetscUtilities::checkError;
     PetscSFBcastEnd(remoteAccess, carrierMpiType, (const void*)raySegmentsCalculations.data(), (void*)raySegmentSummary.data(), MPI_REPLACE) >> utilities::PetscUtilities::checkError;
+    EndEvent();
 
+    StartEvent((GetClassType() + "::EvaluateGains::Recombination").c_str());
     /** March over each
      * INDEXING ANNOTATIONS:
      * evaluatedGains: There is a gain evaluation for every cell * wavelength
@@ -635,8 +727,8 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
              */
             for (unsigned short int s = 0; s < raySegmentsPerOriginRay[rayOffset]; ++s) {
                 for (unsigned short int wavelengthIndex = 0; wavelengthIndex < propertySize; wavelengthIndex++) {
-                    iSource[wavelengthIndex] += raySegmentSummary[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex].Ij * kRadd[wavelengthIndex];
-                    kRadd[wavelengthIndex] *= raySegmentSummary[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex].Krad;
+                    iSource[wavelengthIndex] += raySegmentSummary[localSegmentsMap[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex]].Ij * kRadd[wavelengthIndex];
+                    kRadd[wavelengthIndex] *= raySegmentSummary[localSegmentsMap[absorptivityFunction.propertySize * segmentOffset + wavelengthIndex]].Krad;
                 }
                 segmentOffset++;
             }
@@ -646,7 +738,9 @@ void ablate::radiation::Radiation::EvaluateGains(Vec solVec, ablate::domain::Fie
             rayOffset++;
         }
     }
+    EndEvent();
 
+    StartEvent((GetClassType() + "::EvaluateGains::RestoreArrays").c_str());
     /** Cleanup */
     VecRestoreArrayRead(solVec, &solArray);
     VecRestoreArrayRead(auxVec, &auxArray);

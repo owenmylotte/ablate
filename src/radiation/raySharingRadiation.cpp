@@ -7,7 +7,9 @@ ablate::radiation::RaySharingRadiation::RaySharingRadiation(const std::string& s
 ablate::radiation::RaySharingRadiation::~RaySharingRadiation() {}
 
 void ablate::radiation::RaySharingRadiation::Setup(const ablate::domain::Range& cellRange, ablate::domain::SubDomain& subDomain) {
-    indexLookup = ablate::domain::ReverseRange(cellRange);
+    ablate::domain::Range lookupRange;
+    subDomain.GetCellRange(ablate::domain::Region::ENTIREDOMAIN, lookupRange);
+    indexLookup = ablate::domain::ReverseRange(lookupRange);
 
     ablate::radiation::Radiation::Setup(cellRange, subDomain);
 
