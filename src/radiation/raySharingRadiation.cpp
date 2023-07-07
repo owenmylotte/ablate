@@ -38,12 +38,12 @@ void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domai
             auto& identifier = identifiers[ipart];
             // If this local rank has never seen this search particle before, then it needs to add a new ray segment to local memory and record its index
             if (identifier.remoteRank != rank) {
-                PetscInt absoluteCellIndex = (PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]);
                 if (!ablate::domain::Region::InRegion(region, subDomain.GetDM(), index[ipart])) {
                     // This should only happen if the particle arrives into a remote process's boundary cell.
                     CreateNewSegment(radReturn, identifier, rank);
                 } else {
                     auto& particleVirtualCoord = virtualcoord[ipart];  // Needs the virtual coordinate to back out the ray index it attaches to.
+                    PetscInt absoluteCellIndex = (PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]);
                     AttachToExistingSegment(radReturn, identifier, rank, absoluteCellIndex, particleVirtualCoord);
                 }
             }
