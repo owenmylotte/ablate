@@ -13,7 +13,7 @@ void ablate::radiation::RaySharingRadiation::Setup(const ablate::domain::Range& 
 
     ablate::radiation::Radiation::Setup(cellRange, subDomain);
 
-    raySegments.resize((cellRange.end - cellRange.start) * raysPerCell);
+    for (int i = 0; i < numberOriginRays; i++) raySegments.emplace_back();
 }
 
 void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domain::SubDomain& subDomain, DM radReturn, PetscInt npoints) {
