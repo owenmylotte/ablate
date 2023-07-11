@@ -13,7 +13,24 @@ void ablate::radiation::RaySharingRadiation::Setup(const ablate::domain::Range& 
 
     ablate::radiation::Radiation::Setup(cellRange, subDomain);
 
-    for (int i = 0; i < numberOriginRays; i++) raySegments.emplace_back();
+    for (int i = 0; i < (lookupRange.end - lookupRange.start) * raysPerCell; i++) {
+        raySegments.emplace_back();
+    }
+
+    /**
+     * Give the entire domain including boundary cells empty ray segments so that the indexing is consistent everywhere.
+     */
+    for (PetscInt c = lookupRange.start; c < lookupRange.end; ++c) {
+        const PetscInt iCell = cellRange.points ? cellRange.points[c] : c;
+        if (!region->InRegion(region, subDomain.GetDM(), iCell)) {
+            for (PetscInt r = 0; r < raysPerCell; r++) {
+                auto& raySegment = raySegments[c * raysPerCell + r];
+                auto& boundaryCondition = raySegment.emplace_back();
+                boundaryCondition.cell = iCell;
+                boundaryCondition.pathLength = -1;
+            }
+        }
+    }
 }
 
 void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domain::SubDomain& subDomain, DM radReturn, PetscInt npoints) {
@@ -38,14 +55,9 @@ void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domai
             auto& identifier = identifiers[ipart];
             // If this local rank has never seen this search particle before, then it needs to add a new ray segment to local memory and record its index
             if (identifier.remoteRank != rank) {
-                if (!ablate::domain::Region::InRegion(region, subDomain.GetDM(), index[ipart])) {
-                    // This should only happen if the particle arrives into a remote process's boundary cell.
-                    CreateNewSegment(radReturn, identifier, rank);
-                } else {
-                    auto& particleVirtualCoord = virtualcoord[ipart];  // Needs the virtual coordinate to back out the ray index it attaches to.
-                    PetscInt absoluteCellIndex = (PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]);
-                    AttachToExistingSegment(radReturn, identifier, rank, absoluteCellIndex, particleVirtualCoord);
-                }
+                auto& particleVirtualCoord = virtualcoord[ipart];  // Needs the virtual coordinate to back out the ray index it attaches to.
+                PetscInt absoluteCellIndex = (PetscInt)indexLookup.GetAbsoluteIndex(index[ipart]);
+                AttachToExistingSegment(radReturn, identifier, rank, absoluteCellIndex, particleVirtualCoord);
             }
         }
     }
@@ -75,15 +87,15 @@ void ablate::radiation::RaySharingRadiation::AttachToExistingSegment(DM radRetur
     DMSwarmAddPoint(radReturn) >> utilities::PetscUtilities::checkError;  //!< Another solve particle is added here because the search particle has entered a new domain
     struct Identifier* returnIdentifiers;                                 //!< Pointer to the ray identifier information
     PetscInt* returnRank;                                                 //! while we are here, set the return rank.  This won't change anything until migrate is called
-    PetscInt nRaySegments;
-    DMSwarmGetLocalSize(radReturn, &nRaySegments) >> utilities::PetscUtilities::checkError;
+    PetscInt nReturnParticles;
+    DMSwarmGetLocalSize(radReturn, &nReturnParticles) >> utilities::PetscUtilities::checkError;
     DMSwarmGetField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
         utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
     DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
 
     // these are only created as remote rays are identified, so we can remoteRayId for the rank
-    returnIdentifiers[nRaySegments - 1] = identifier;
-    returnRank[nRaySegments - 1] = identifier.originRank;
+    returnIdentifiers[nReturnParticles - 1] = identifier;
+    returnRank[nReturnParticles - 1] = identifier.originRank;
 
     DMSwarmRestoreField(radReturn, IdentifierField, nullptr, nullptr, (void**)&returnIdentifiers) >>
         utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
