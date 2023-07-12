@@ -7,21 +7,29 @@ ablate::radiation::RaySharingRadiation::RaySharingRadiation(const std::string& s
 ablate::radiation::RaySharingRadiation::~RaySharingRadiation() {}
 
 void ablate::radiation::RaySharingRadiation::Setup(const ablate::domain::Range& cellRange, ablate::domain::SubDomain& subDomain) {
+    /** Getting all of the cells into the lookup range.
+     * Now, the particles will have a remote ray to index to regardless of what cell they land in.
+     */
     ablate::domain::Range lookupRange;
     subDomain.GetCellRange(ablate::domain::Region::ENTIREDOMAIN, lookupRange);
     indexLookup = ablate::domain::ReverseRange(lookupRange);
 
+    /**
+     * Perform the base class setup to seed particles within all cells in the radiation region.
+     */
     ablate::radiation::Radiation::Setup(cellRange, subDomain);
 
-    for (int i = 0; i < (lookupRange.end - lookupRange.start) * raysPerCell; i++) {
-        raySegments.emplace_back();
-    }
+    /**
+     * Resize the ray segments vector to hold the number of rays in the index lookup.
+     */
+    raySegments.resize((lookupRange.end - lookupRange.start) * raysPerCell);
 
     /**
      * Give the entire domain including boundary cells empty ray segments so that the indexing is consistent everywhere.
+     * Every cell in the lookup region that is not in the radiation region should get a set of boundary rays.
      */
-    for (PetscInt c = lookupRange.start; c < lookupRange.end; ++c) {
-        const PetscInt iCell = cellRange.points ? cellRange.points[c] : c;
+    for (PetscInt c = 0; c < lookupRange.end - lookupRange.start; ++c) {
+        const PetscInt iCell = lookupRange.points ? lookupRange.points[c] : c;
         if (!region->InRegion(region, subDomain.GetDM(), iCell)) {
             for (PetscInt r = 0; r < raysPerCell; r++) {
                 auto& raySegment = raySegments[c * raysPerCell + r];
@@ -69,18 +77,22 @@ void ablate::radiation::RaySharingRadiation::IdentifyNewRaysOnRank(ablate::domai
 
 void ablate::radiation::RaySharingRadiation::AttachToExistingSegment(DM radReturn, struct ablate::radiation::Radiation::Identifier& identifier, PetscMPIInt rank, PetscInt absoluteCellIndex,
                                                                      struct ablate::radiation::Radiation::Virtualcoord& particleVirtualCoord) {
-    //! Get nTheta
+    /**
+     * The index of the particle is backed out of its direction
+     * This is not a very computationally efficient way to do it
+     * It works consistently
+     */
     double theta = acos(particleVirtualCoord.zdir);
     double phi = atan2(particleVirtualCoord.ydir, particleVirtualCoord.xdir);
     if (phi < 0) phi += 2 * ablate::utilities::Constants::pi;
     PetscInt ntheta = (PetscInt)round((((theta / ablate::utilities::Constants::pi) * (double)nTheta) - 0.5));
     PetscInt nphi = (PetscInt)round(((phi / (2.0 * ablate::utilities::Constants::pi)) * (double)nPhi));
 
-    // Update the identifier for this rank.  When it gets sent to another rank a copy will be made
+    //! The particle has now been picked up on this rank.
     identifier.remoteRank = rank;
-    // set the remoteRayId to be the next one in the way
+    //! The remote ray ID for this particle is assigned based on the absolute indexing for it's entry position and direction for this process.
     identifier.remoteRayId = (absoluteCellIndex * raysPerCell) + (ntheta * nPhi) + nphi;  //! Should be set to (absoluteCellIndex * raysPerCell + angleNumber)
-    // bump the nSegment
+    //! Increase the segment number for return organization
     identifier.nSegment++;
 
     // store this ray and information in the return data
@@ -93,7 +105,10 @@ void ablate::radiation::RaySharingRadiation::AttachToExistingSegment(DM radRetur
         utilities::PetscUtilities::checkError;  //!< Get the fields from the radsolve swarm so the new point can be written to them
     DMSwarmGetField(radReturn, DMSwarmField_rank, nullptr, nullptr, (void**)&returnRank) >> utilities::PetscUtilities::checkError;
 
-    // these are only created as remote rays are identified, so we can remoteRayId for the rank
+    /**
+     * There are multiple return identifiers for each remote ray when in the ray sharing implementation
+     * The particle will be placed on to the end of the array representing the return identifiers
+     */
     returnIdentifiers[nReturnParticles - 1] = identifier;
     returnRank[nReturnParticles - 1] = identifier.originRank;
 
@@ -126,8 +141,6 @@ void ablate::radiation::RaySharingRadiation::ParticleStep(ablate::domain::SubDom
         if (index[ipart] >= 0 && subDomain.InRegion(index[ipart])) {
             StartEvent((GetClassType() + "::Initialize::GetConnectivity").c_str());
             auto& identifier = identifiers[ipart];
-            // Exact the ray to reduce lookup
-            auto& ray = raySegments[identifier.remoteRayId];
 
             /** ********************************************
              * The face stepping routine will give the precise path length of the mesh without any error. It will also allow the faces of the cells to be accounted for so that the
@@ -179,9 +192,12 @@ void ablate::radiation::RaySharingRadiation::ParticleStep(ablate::domain::SubDom
              * Matching the origin rank doesn't account for particles that have re-entered their origin rank after travelling
              * Using the segment number ensures that only the original segment track writes anything to the ray
              */
-            if (identifier.nSegment == 0) { /** Step 1: Register the current cell index in the rays vector. The physical coordinates that have been set in the previous step / loop will be
-                                             * immediately registered. Because the ray comes from the origin, all of the cell indexes are naturally ordered from the center out
-                                             * */
+            if (identifier.nSegment == 0) {
+                /** Step 1: Register the current cell index in the rays vector. The physical coordinates that have been set in the previous step / loop will be
+                 * immediately registered. Because the ray comes from the origin, all of the cell indexes are naturally ordered from the center out
+                 * */
+                // Exact the ray to reduce lookup
+                auto& ray = raySegments[identifier.remoteRayId];
                 auto& raySegment = ray.emplace_back();
                 raySegment.cell = index[ipart];
                 raySegment.pathLength = virtualcoords[ipart].hhere;
