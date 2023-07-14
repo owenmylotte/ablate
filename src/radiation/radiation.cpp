@@ -145,15 +145,20 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
 
     DMSwarmMigrate(radSearch, PETSC_TRUE) >> utilities::PetscUtilities::checkError;  //!< Sets the search particles in the cell indexes to which they have been assigned
 
+    PetscMPIInt totalCount = 0;
+    PetscMPIInt localCount = 0;
+    PetscMPIIntCast(ipart, &localCount);
+    MPI_Reduce(&localCount, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+    DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
+    PetscMPIInt afterMigrate = 0;
+    PetscMPIIntCast(ipart, &afterMigrate);
+
     if (log) {
-        PetscMPIInt totalCount = 0;
-        PetscMPIInt localCount = 0;
-        PetscMPIIntCast(ipart, &localCount);
-        MPI_Reduce(&localCount, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
         log->Printf("Particles Setup: %i\n", totalCount);
-        DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
         log->Printf("After First Migrate: %i\n", ipart);
     }
+    if (afterMigrate != totalCount) throw std::runtime_error("\nParticles lost to mesh during initial migration.\n");
+
     EndEvent();
 }
 
