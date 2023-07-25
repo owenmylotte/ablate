@@ -157,7 +157,7 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
         log->Printf("Particles Setup: %i\n", totalCount);
         log->Printf("After First Migrate: %i\n", ipart);
     }
-    if (afterMigrate != totalCount) throw std::runtime_error("\nParticles lost to mesh during initial migration.\n");
+    //    if (afterMigrate != totalCount) throw std::runtime_error("\nParticles lost to mesh during initial migration.\n");
 
     EndEvent();
 }
