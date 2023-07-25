@@ -49,6 +49,14 @@ void ablate::radiation::Radiation::Setup(const ablate::domain::Range& cellRange,
     raysPerCell = nTheta * nPhi;
     numberOriginRays = numberOriginCells * raysPerCell;  //!< Number of points to insert into the particle field. One particle for each ray.
 
+    if (log) {
+        PetscMPIInt cellTotal = 0;
+        PetscMPIInt cellLocal = 0;
+        PetscMPIIntCast(numberOriginCells, &cellLocal);
+        MPI_Reduce(&cellLocal, &cellTotal, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+        log->Printf("%d cells in range\n", cellTotal);
+    }
+
     /** Create the DMSwarm */
     DMCreate(subDomain.GetComm(), &radSearch) >> utilities::PetscUtilities::checkError;
     DMSetType(radSearch, DMSWARM) >> utilities::PetscUtilities::checkError;
@@ -301,6 +309,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
 
     // Move the identifiers in radReturn back to origin
     StartEvent((GetClassType() + "::Initialize::RadReturn").c_str());
+    if (log) log->Printf("Return Communication\n");
     DMSwarmMigrate(radReturn, PETSC_TRUE) >> utilities::PetscUtilities::checkError;
     EndEvent();
 
@@ -422,6 +431,7 @@ void ablate::radiation::Radiation::Initialize(const ablate::domain::Range& cellR
     PetscInt count = 2 * absorptivityFunction.propertySize;  //! = 2 * (the number of independent wavelengths that are being considered). Should be read from absorption model.
     MPI_Type_contiguous(count, MPIU_REAL, &carrierMpiType) >> utilities::MpiUtilities::checkError;
     MPI_Type_commit(&carrierMpiType) >> utilities::MpiUtilities::checkError;
+    if (log) log->Printf("Done\n");
     EndEvent();
 }
 

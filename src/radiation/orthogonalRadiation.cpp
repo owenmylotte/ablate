@@ -42,6 +42,14 @@ void ablate::radiation::OrthogonalRadiation::Setup(const ablate::domain::Range& 
     raysPerCell = 2;
     numberOriginRays = numberOriginCells * raysPerCell;  //!< Number of points to insert into the particle field. One particle for each ray.
 
+    if (log) {
+        PetscMPIInt cellTotal = 0;
+        PetscMPIInt cellLocal = 0;
+        PetscMPIIntCast(numberOriginCells, &cellLocal);
+        MPI_Reduce(&cellLocal, &cellTotal, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+        log->Printf("%d cells in range\n", cellTotal);
+    }
+
     /** Create the DMSwarm */
     DMCreate(subDomain.GetComm(), &radSearch) >> utilities::PetscUtilities::checkError;
     DMSetType(radSearch, DMSWARM) >> utilities::PetscUtilities::checkError;
