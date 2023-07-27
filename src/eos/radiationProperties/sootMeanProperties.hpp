@@ -15,14 +15,16 @@ class SootMeanProperties : public RadiationModel {
         PetscInt densityYiCSolidCOffset;
         const ThermodynamicFunction temperatureFunction;
         const ThermodynamicTemperatureFunction densityFunction;
+        PetscReal ppm;
     };
     const std::shared_ptr<eos::EOS> eos;  //! eos is needed to compute field values
     constexpr static PetscReal C_2 = (utilities::Constants::h * utilities::Constants::c) / (utilities::Constants::k);
-    constexpr static PetscReal C_0 = 7.0;
+    constexpr static PetscReal C_0 = 3.23;
     constexpr static PetscReal rhoC = 2000;  // kg/m^3
+    PetscReal ppmIn;
+
    public:
-    SootMeanProperties(std::shared_ptr<EOS> eosIn);
-    ThermodynamicFunction GetRadiationPropertiesFunction(RadiationProperty property, const std::vector<domain::Field>& fields) const;
+    SootMeanProperties(std::shared_ptr<EOS> eosIn, const PetscReal ppm = -1);
     ThermodynamicTemperatureFunction GetRadiationPropertiesTemperatureFunction(RadiationProperty property, const std::vector<domain::Field>& fields) const;
 
     static PetscErrorCode SootAbsorptionTemperatureFunction(const PetscReal* conserved, PetscReal temperature, PetscReal* kappa, void* ctx);

@@ -1,6 +1,6 @@
 #include "sootMeanProperties.hpp"
 
-ablate::eos::radiationProperties::SootMeanProperties::SootMeanProperties(std::shared_ptr<eos::EOS> eosIn) : eos(std::move(eosIn)) {}
+ablate::eos::radiationProperties::SootMeanProperties::SootMeanProperties(std::shared_ptr<eos::EOS> eosIn, const PetscReal ppm) : eos(std::move(eosIn)), ppmIn(ppm) {}
 
 PetscErrorCode ablate::eos::radiationProperties::SootMeanProperties::SootEmissionTemperatureFunction(const PetscReal *conserved, PetscReal temperature, PetscReal *epsilon, void *ctx) {
     PetscFunctionBeginUser;
@@ -22,8 +22,7 @@ PetscErrorCode ablate::eos::radiationProperties::SootMeanProperties::SootAbsorpt
     PetscReal YinC = (functionContext->densityYiCSolidCOffset == -1) ? 0 : conserved[functionContext->densityYiCSolidCOffset] / density;     //!< Get the mass fraction of carbon here
 
     PetscReal fv = density * YinC / rhoC;
-    //    PetscReal ppm = 60.; //! This is the soot volume fraction used for the model in the paper.
-    //    fv = ppm / 1.E6;
+    if (functionContext->ppm != -1) fv = functionContext->ppm / 1.E6;
 
     *kappa = (3.72 * fv * C_0 * temperature) / C_2;
 
@@ -52,14 +51,16 @@ ablate::eos::ThermodynamicTemperatureFunction ablate::eos::radiationProperties::
                 .context = std::make_shared<FunctionContext>(
                     FunctionContext{.densityYiCSolidCOffset = cOffset,
                                     .temperatureFunction = eos->GetThermodynamicFunction(ThermodynamicProperty::Temperature, fields),
-                                    .densityFunction = eos->GetThermodynamicTemperatureFunction(ThermodynamicProperty::Density, fields)})};  //!< Create a struct to hold the offsets
+                                    .densityFunction = eos->GetThermodynamicTemperatureFunction(ThermodynamicProperty::Density, fields),
+                                    .ppm = ppmIn})};  //!< Create a struct to hold the offsets
         case RadiationProperty::Emissivity:
             return ThermodynamicTemperatureFunction{
                 .function = SootEmissionTemperatureFunction,
                 .context = std::make_shared<FunctionContext>(
                     FunctionContext{.densityYiCSolidCOffset = cOffset,
                                     .temperatureFunction = eos->GetThermodynamicFunction(ThermodynamicProperty::Temperature, fields),
-                                    .densityFunction = eos->GetThermodynamicTemperatureFunction(ThermodynamicProperty::Density, fields)})};  //!< Create a struct to hold the offsets
+                                    .densityFunction = eos->GetThermodynamicTemperatureFunction(ThermodynamicProperty::Density, fields),
+                                    .ppm = ppmIn})};  //!< Create a struct to hold the offsets
         default:
             throw std::invalid_argument("Unknown radiationProperties property in ablate::eos::radiationProperties::SootAbsorptionModel");
     }
@@ -67,4 +68,5 @@ ablate::eos::ThermodynamicTemperatureFunction ablate::eos::radiationProperties::
 
 #include "registrar.hpp"
 REGISTER(ablate::eos::radiationProperties::RadiationModel, ablate::eos::radiationProperties::SootMeanProperties, "SootMeanAbsorption",
-         ARG(ablate::eos::EOS, "eos", "The EOS used to compute field properties"));
+         ARG(ablate::eos::EOS, "eos", "The EOS used to compute field properties"),
+         OPT(double, "ppm", "Fix the soot ppm of the simulation to a certain value."));
