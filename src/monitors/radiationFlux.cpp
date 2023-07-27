@@ -69,6 +69,7 @@ void ablate::monitors::RadiationFlux::Register(std::shared_ptr<solver::Solver> s
     IS faceIs;
     const PetscInt* faceToBoundary = nullptr;
     DMPlexGetSubpointIS(fluxDm, &faceIs) >> utilities::PetscUtilities::checkError;
+    if (!faceIs) throw std::invalid_argument(("\nThe face region of " + name + " is empty!\n").c_str());
     ISGetIndices(faceIs, &faceToBoundary) >> utilities::PetscUtilities::checkError;
 
     PetscInt maxDepth;

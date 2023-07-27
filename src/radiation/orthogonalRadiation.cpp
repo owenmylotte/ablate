@@ -140,9 +140,16 @@ void ablate::radiation::OrthogonalRadiation::Setup(const ablate::domain::Range& 
 
     DMSwarmMigrate(radSearch, PETSC_TRUE) >> utilities::PetscUtilities::checkError;  //!< Sets the search particles in the cell indexes to which they have been assigned
 
+    PetscMPIInt totalCount = 0;
+    PetscMPIInt localCount = 0;
+    PetscMPIIntCast(ipart, &localCount);
+    MPI_Reduce(&localCount, &totalCount, 1, MPI_INT, MPI_SUM, 0, PETSC_COMM_WORLD);
+    DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
+    PetscMPIInt afterMigrate = 0;
+    PetscMPIIntCast(ipart, &afterMigrate);
+
     if (log) {
-        log->Printf("Particles Setup: %i\n", ipart);
-        DMSwarmGetSize(radSearch, &ipart) >> utilities::PetscUtilities::checkError;
+        log->Printf("Particles Setup: %i\n", totalCount);
         log->Printf("After First Migrate: %i\n", ipart);
     }
 }
