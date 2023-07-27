@@ -22,8 +22,8 @@ PetscErrorCode ablate::eos::radiationProperties::SootMeanProperties::SootAbsorpt
     PetscReal YinC = (functionContext->densityYiCSolidCOffset == -1) ? 0 : conserved[functionContext->densityYiCSolidCOffset] / density;     //!< Get the mass fraction of carbon here
 
     PetscReal fv = density * YinC / rhoC;
-    PetscReal ppm = 60.; //! This is the soot volume fraction used for the model in the paper.
-    fv = ppm / 1.E6;
+    //    PetscReal ppm = 60.; //! This is the soot volume fraction used for the model in the paper.
+    //    fv = ppm / 1.E6;
 
     *kappa = (3.72 * fv * C_0 * temperature) / C_2;
 
