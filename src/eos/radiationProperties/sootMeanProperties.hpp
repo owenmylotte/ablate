@@ -19,7 +19,7 @@ class SootMeanProperties : public RadiationModel {
     };
     const std::shared_ptr<eos::EOS> eos;  //! eos is needed to compute field values
     constexpr static PetscReal C_2 = (utilities::Constants::h * utilities::Constants::c) / (utilities::Constants::k);
-    constexpr static PetscReal C_0 = 3.23;
+    constexpr static PetscReal C_0 = 4.7;
     constexpr static PetscReal rhoC = 2000;  // kg/m^3
     PetscReal ppmIn;
 

@@ -24,7 +24,7 @@ PetscErrorCode ablate::eos::radiationProperties::SootMeanProperties::SootAbsorpt
     PetscReal fv = density * YinC / rhoC;
     if (functionContext->ppm != -1) fv = functionContext->ppm / 1.E6;
 
-    *kappa = (3.72 * fv * C_0 * temperature) / C_2;
+    *kappa = (3.6 * fv * C_0 * temperature) / C_2;
 
     PetscFunctionReturn(0);
 }
